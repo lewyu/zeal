@@ -29,6 +29,7 @@
 #include <QMap>
 #include <QObject>
 
+class QAbstractItemModel;
 class QThread;
 
 namespace Zeal {
@@ -37,12 +38,15 @@ namespace Registry {
 class Docset;
 struct SearchResult;
 
-class DocsetRegistry : public QObject
+class DocsetRegistry final : public QObject
 {
     Q_OBJECT
+    Q_DISABLE_COPY(DocsetRegistry)
 public:
     explicit DocsetRegistry(QObject *parent = nullptr);
     ~DocsetRegistry() override;
+
+    QAbstractItemModel *model() const;
 
     QString storagePath() const;
     void setStoragePath(const QString &path);
@@ -53,7 +57,10 @@ public:
     int count() const;
     bool contains(const QString &name) const;
     QStringList names() const;
-    void remove(const QString &name);
+
+    void loadDocset(const QString &path);
+    void unloadDocset(const QString &name);
+    void unloadAllDocsets();
 
     Docset *docset(const QString &name) const;
     Docset *docset(int index) const;
@@ -62,13 +69,10 @@ public:
     void search(const QString &query);
     const QList<SearchResult> &queryResults();
 
-public slots:
-    void addDocset(const QString &path);
-
 signals:
-    void docsetAdded(const QString &name);
-    void docsetAboutToBeRemoved(const QString &name);
-    void docsetRemoved(const QString &name);
+    void docsetLoaded(const QString &name);
+    void docsetAboutToBeUnloaded(const QString &name);
+    void docsetUnloaded(const QString &name);
     void searchCompleted(const QList<SearchResult> &results);
 
 private slots:
@@ -76,6 +80,8 @@ private slots:
 
 private:
     void addDocsetsFromFolder(const QString &path);
+
+    QAbstractItemModel *m_model = nullptr;
 
     QString m_storagePath;
     bool m_fuzzySearchEnabled = false;

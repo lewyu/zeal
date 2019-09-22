@@ -23,6 +23,8 @@
 
 #include "searchquery.h"
 
+#include <utility>
+
 using namespace Zeal::Registry;
 
 namespace {
@@ -30,12 +32,8 @@ const char prefixSeparator = ':';
 const char keywordSeparator = ',';
 }
 
-SearchQuery::SearchQuery()
-{
-}
-
-SearchQuery::SearchQuery(const QString &query, const QStringList &keywords) :
-    m_query(query)
+SearchQuery::SearchQuery(QString query, const QStringList &keywords) :
+    m_query(std::move(query))
 {
     setKeywords(keywords);
 }
@@ -61,10 +59,11 @@ SearchQuery SearchQuery::fromString(const QString &str)
 
 QString SearchQuery::toString() const
 {
-    if (m_keywords.isEmpty())
+    if (m_keywords.isEmpty()) {
         return m_query;
-    else
-        return m_keywordPrefix + m_query;
+    }
+
+    return m_keywordPrefix + m_query;
 }
 
 bool SearchQuery::isEmpty() const
@@ -91,23 +90,14 @@ bool SearchQuery::hasKeywords() const
     return !m_keywords.isEmpty();
 }
 
-bool SearchQuery::hasKeyword(const QString &keyword) const
-{
-    // Temporary workaround for #333
-    // TODO: Remove once #167 is implemented
-    for (const QString &kw : m_keywords) {
-        if (keyword.startsWith(kw, Qt::CaseInsensitive))
-            return true;
-    }
-    return false;
-}
-
 bool SearchQuery::hasKeywords(const QStringList &keywords) const
 {
     for (const QString &keyword : keywords) {
-        if (m_keywords.contains(keyword))
+        if (m_keywords.contains(keyword, Qt::CaseInsensitive)) {
             return true;
+        }
     }
+
     return false;
 }
 

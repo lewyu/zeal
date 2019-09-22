@@ -31,14 +31,14 @@ using namespace Zeal;
 using namespace Zeal::WidgetUi;
 
 DocsetListItemDelegate::DocsetListItemDelegate(QObject *parent) :
-    QItemDelegate(parent)
+    QStyledItemDelegate(parent)
 {
 }
 
 void DocsetListItemDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
-                               const QModelIndex &index) const
+                                   const QModelIndex &index) const
 {
-    QItemDelegate::paint(painter, option, index);
+    QStyledItemDelegate::paint(painter, option, index);
 
     if (!index.model()->data(index, Registry::ItemDataRole::UpdateAvailableRole).toBool())
         return;
@@ -51,12 +51,32 @@ void DocsetListItemDelegate::paint(QPainter *painter, const QStyleOptionViewItem
     const QFontMetrics fontMetrics(font);
 
     QRect textRect = option.rect;
+#if QT_VERSION >= QT_VERSION_CHECK(5, 11, 0)
+    textRect.setLeft(textRect.right() - fontMetrics.horizontalAdvance(text) - 2);
+#else
     textRect.setLeft(textRect.right() - fontMetrics.width(text) - 2);
+#endif
 
     painter->save();
 
-    if (option.state & QStyle::State_Selected)
-        painter->setPen(QPen(option.palette.highlightedText(), 1));
+    QPalette palette = option.palette;
+
+#ifdef Q_OS_WIN32
+    // QWindowsVistaStyle overrides highlight colour.
+    if (option.widget->style()->objectName() == QLatin1String("windowsvista")) {
+        palette.setColor(QPalette::All, QPalette::HighlightedText,
+                         palette.color(QPalette::Active, QPalette::Text));
+    }
+#endif
+
+    const QPalette::ColorGroup cg = (option.state & QStyle::State_Active)
+            ? QPalette::Normal : QPalette::Inactive;
+
+    if (option.state & QStyle::State_Selected) {
+        painter->setPen(palette.color(cg, QPalette::HighlightedText));
+    } else {
+        painter->setPen(palette.color(cg, QPalette::Text));
+    }
 
     painter->setFont(font);
     painter->drawText(textRect, text);

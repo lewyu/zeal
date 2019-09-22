@@ -22,8 +22,11 @@
 
 #include "settings.h"
 
+#include "application.h"
+
 #include <QCoreApplication>
 #include <QDir>
+#include <QFileInfo>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QUrl>
@@ -47,6 +50,13 @@ using namespace Zeal::Core;
 Settings::Settings(QObject *parent) :
     QObject(parent)
 {
+    qRegisterMetaTypeStreamOperators<ExternalLinkPolicy>("ExternalLinkPolicy");
+
+    // Enable local storage due to https://github.com/zealdocs/zeal/issues/872.
+    QWebSettings *webSettings = QWebSettings::globalSettings();
+    webSettings->setLocalStoragePath(Application::cacheLocation() + QLatin1String("/localStorage"));
+    webSettings->setAttribute(QWebSettings::LocalStorageEnabled, true);
+
     load();
 }
 
@@ -81,14 +91,53 @@ void Settings::load()
     settings->endGroup();
 
     settings->beginGroup(GroupContent);
+    // Fonts
+    QWebSettings *webSettings = QWebSettings::globalSettings();
+    serifFontFamily = settings->value(QStringLiteral("serif_font_family"),
+                                      webSettings->fontFamily(QWebSettings::SerifFont)).toString();
+    sansSerifFontFamily = settings->value(QStringLiteral("sans_serif_font_family"),
+                                          webSettings->fontFamily(QWebSettings::SansSerifFont)).toString();
+    fixedFontFamily = settings->value(QStringLiteral("fixed_font_family"),
+                                      webSettings->fontFamily(QWebSettings::FixedFont)).toString();
+
+    static const QMap<QString, QWebSettings::FontFamily> fontFamilies = {
+        {QStringLiteral("sans-serif"), QWebSettings::SansSerifFont},
+        {QStringLiteral("serif"), QWebSettings::SerifFont},
+        {QStringLiteral("monospace"), QWebSettings::FixedFont}
+    };
+
+    defaultFontFamily = settings->value(QStringLiteral("default_font_family"),
+                                        QStringLiteral("serif")).toString();
+
+    // Fallback to the serif font family.
+    if (!fontFamilies.contains(defaultFontFamily)) {
+        defaultFontFamily = QStringLiteral("serif");
+    }
+
+    webSettings->setFontFamily(QWebSettings::SansSerifFont, sansSerifFontFamily);
+    webSettings->setFontFamily(QWebSettings::SerifFont, serifFontFamily);
+    webSettings->setFontFamily(QWebSettings::FixedFont, fixedFontFamily);
+
+    const QString defaultFontFamilyResolved = webSettings->fontFamily(fontFamilies.value(defaultFontFamily));
+    webSettings->setFontFamily(QWebSettings::StandardFont, defaultFontFamilyResolved);
+
+    defaultFontSize = settings->value(QStringLiteral("default_font_size"),
+                                      webSettings->fontSize(QWebSettings::DefaultFontSize)).toInt();
+    defaultFixedFontSize = settings->value(QStringLiteral("default_fixed_font_size"),
+                                           webSettings->fontSize(QWebSettings::DefaultFixedFontSize)).toInt();
     minimumFontSize = settings->value(QStringLiteral("minimum_font_size"),
-                                      QWebSettings::globalSettings()->fontSize(QWebSettings::MinimumFontSize)).toInt();
-    QWebSettings::globalSettings()->setFontSize(QWebSettings::MinimumFontSize, minimumFontSize);
+                                      webSettings->fontSize(QWebSettings::MinimumFontSize)).toInt();
+
+    webSettings->setFontSize(QWebSettings::DefaultFontSize, defaultFontSize);
+    webSettings->setFontSize(QWebSettings::DefaultFixedFontSize, defaultFixedFontSize);
+    webSettings->setFontSize(QWebSettings::MinimumFontSize, minimumFontSize);
 
     darkModeEnabled = settings->value(QStringLiteral("dark_mode"), false).toBool();
     highlightOnNavigateEnabled = settings->value(QStringLiteral("highlight_on_navigate"), true).toBool();
     customCssFile = settings->value(QStringLiteral("custom_css_file")).toString();
-    isAdDisabled = settings->value(QStringLiteral("disable_ad"), false).toBool();
+    externalLinkPolicy = settings->value(QStringLiteral("external_link_policy"),
+                                         QVariant::fromValue(ExternalLinkPolicy::Ask)).value<ExternalLinkPolicy>();
+    isSmoothScrollingEnabled = settings->value(QStringLiteral("smooth_scrolling"), false).toBool();
     settings->endGroup();
 
     settings->beginGroup(GroupProxy);
@@ -109,11 +158,21 @@ void Settings::load()
         docsetPath = QStandardPaths::writableLocation(QStandardPaths::DataLocation)
                 + QLatin1String("/docsets");
 #else
-        docsetPath = QCoreApplication::applicationDirPath() + QLatin1String("/docsets");
+        docsetPath = QStringLiteral("docsets");
 #endif
-        QDir().mkpath(docsetPath);
     }
     settings->endGroup();
+
+    // Create the docset storage directory if it doesn't exist.
+    const QFileInfo fi(docsetPath);
+    if (!fi.exists()) {
+        // TODO: Report QDir::mkpath() errors.
+        if (fi.isRelative()) {
+            QDir().mkpath(QCoreApplication::applicationDirPath() + "/" + docsetPath);
+        } else {
+            QDir().mkpath(docsetPath);
+        }
+    }
 
     settings->beginGroup(GroupState);
     windowGeometry = settings->value(QStringLiteral("window_geometry")).toByteArray();
@@ -153,11 +212,20 @@ void Settings::save()
     settings->endGroup();
 
     settings->beginGroup(GroupContent);
+    settings->setValue(QStringLiteral("default_font_family"), defaultFontFamily);
+    settings->setValue(QStringLiteral("serif_font_family"), serifFontFamily);
+    settings->setValue(QStringLiteral("sans_serif_font_family"), sansSerifFontFamily);
+    settings->setValue(QStringLiteral("fixed_font_family"), fixedFontFamily);
+
+    settings->setValue(QStringLiteral("default_font_size"), defaultFontSize);
+    settings->setValue(QStringLiteral("default_fixed_font_size"), defaultFixedFontSize);
     settings->setValue(QStringLiteral("minimum_font_size"), minimumFontSize);
+
     settings->setValue(QStringLiteral("dark_mode"), darkModeEnabled);
     settings->setValue(QStringLiteral("highlight_on_navigate"), highlightOnNavigateEnabled);
     settings->setValue(QStringLiteral("custom_css_file"), customCssFile);
-    settings->setValue(QStringLiteral("disable_ad"), isAdDisabled);
+    settings->setValue(QStringLiteral("external_link_policy"), QVariant::fromValue(externalLinkPolicy));
+    settings->setValue(QStringLiteral("smooth_scrolling"), isSmoothScrollingEnabled);
     settings->endGroup();
 
     settings->beginGroup(GroupProxy);
@@ -182,7 +250,7 @@ void Settings::save()
     settings->beginGroup(GroupInternal);
     settings->setValue(QStringLiteral("install_id"), installId);
     // Version of configuration file format, should match Zeal version. Used for migration rules.
-    settings->setValue(QStringLiteral("version"), QCoreApplication::applicationVersion());
+    settings->setValue(QStringLiteral("version"), Application::version().toString());
     settings->endGroup();
 
     settings->sync();
@@ -201,16 +269,27 @@ void Settings::save()
 void Settings::migrate(QSettings *settings) const
 {
     settings->beginGroup(GroupInternal);
-    // TODO: [Qt 5.6] Use QVersionNumber.
-    const QString version = settings->value(QStringLiteral("version")).toString();
+    const auto version = QVersionNumber::fromString(settings->value(QStringLiteral("version")).toString());
     settings->endGroup();
+
+    //
+    // 0.6.0
+    //
+
+    // Unset content.default_fixed_font_size.
+    // The causing bug was 0.6.1 (#903), but the incorrect setting still comes to haunt us (#1054).
+    if (version == QVersionNumber(0, 6, 0)) {
+        settings->beginGroup(GroupContent);
+        settings->remove(QStringLiteral("default_fixed_font_size"));
+        settings->endGroup();
+    }
 
     //
     // Pre 0.4
     //
 
     // Rename 'browser' group into 'content'.
-    if (version < QLatin1String("0.4")) {
+    if (version < QVersionNumber(0, 4, 0)) {
         settings->beginGroup(QStringLiteral("browser"));
         const QVariant tmpMinimumFontSize = settings->value(QStringLiteral("minimum_font_size"));
         settings->endGroup();
@@ -229,7 +308,7 @@ void Settings::migrate(QSettings *settings) const
     //
 
     // Unset 'state/splitter_geometry', because custom styles were removed.
-    if (version < QLatin1String("0.3")) {
+    if (version < QVersionNumber(0, 3, 0)) {
         settings->beginGroup(GroupState);
         settings->remove(QStringLiteral("splitter_geometry"));
         settings->endGroup();
@@ -253,4 +332,18 @@ QSettings *Settings::qsettings(QObject *parent)
     return new QSettings(QCoreApplication::applicationDirPath() + QLatin1String("/zeal.ini"),
                          QSettings::IniFormat, parent);
 #endif
+}
+
+QDataStream &operator<<(QDataStream &out, Settings::ExternalLinkPolicy policy)
+{
+    out << static_cast<std::underlying_type<Settings::ExternalLinkPolicy>::type>(policy);
+    return out;
+}
+
+QDataStream &operator>>(QDataStream &in, Settings::ExternalLinkPolicy &policy)
+{
+    std::underlying_type<Settings::ExternalLinkPolicy>::type value;
+    in >> value;
+    policy = static_cast<Settings::ExternalLinkPolicy>(value);
+    return in;
 }

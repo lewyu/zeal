@@ -31,12 +31,13 @@
 namespace Zeal {
 namespace Registry {
 
-class SearchModel : public QAbstractListModel
+class SearchModel final : public QAbstractListModel
 {
     Q_OBJECT
+    Q_DISABLE_COPY(SearchModel)
 public:
     explicit SearchModel(QObject *parent = nullptr);
-    SearchModel(const SearchModel &other);
+    SearchModel *clone(QObject *parent = nullptr);
 
     bool isEmpty() const;
 

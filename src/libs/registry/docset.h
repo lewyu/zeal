@@ -40,11 +40,12 @@ namespace Registry {
 class CancellationToken;
 struct SearchResult;
 
-class Docset
+class Docset final
 {
+    Q_DISABLE_COPY(Docset)
 public:
-    explicit Docset(const QString &path);
-    ~Docset();
+    explicit Docset(QString path);
+    virtual ~Docset();
 
     bool isValid() const;
 
@@ -54,6 +55,7 @@ public:
 
     QString version() const;
     QString revision() const;
+    QString feedUrl() const;
 
     QString path() const;
     QString documentPath() const;
@@ -78,6 +80,8 @@ public:
     bool isFuzzySearchEnabled() const;
     void setFuzzySearchEnabled(bool enabled);
 
+    bool isJavaScriptEnabled() const;
+
 private:
     enum class Type {
         Invalid,
@@ -100,6 +104,7 @@ private:
     QStringList m_keywords;
     QString m_version;
     QString m_revision;
+    QString m_feedUrl;
     Docset::Type m_type = Type::Invalid;
     QString m_path;
     QIcon m_icon;
@@ -111,6 +116,7 @@ private:
     mutable QMap<QString, QMap<QString, QUrl>> m_symbols;
     Util::SQLiteDatabase *m_db = nullptr;
     bool m_fuzzySearchEnabled = false;
+    bool m_javaScriptEnabled = false;
 };
 
 } // namespace Registry

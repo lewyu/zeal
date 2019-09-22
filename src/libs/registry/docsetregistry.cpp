@@ -24,13 +24,14 @@
 #include "docsetregistry.h"
 
 #include "docset.h"
+#include "listmodel.h"
 #include "searchquery.h"
 #include "searchresult.h"
 
 #include <QDir>
 #include <QThread>
 
-#include <QtConcurrent/QtConcurrent>
+#include <QtConcurrent>
 
 #include <functional>
 
@@ -41,9 +42,10 @@ void MergeQueryResults(QList<SearchResult> &finalResult, const QList<SearchResul
     finalResult << partial;
 }
 
-DocsetRegistry::DocsetRegistry(QObject *parent) :
-    QObject(parent),
-    m_thread(new QThread(this))
+DocsetRegistry::DocsetRegistry(QObject *parent)
+    : QObject(parent)
+    , m_model(new ListModel(this))
+    , m_thread(new QThread(this))
 {
     // Register for use in signal connections.
     qRegisterMetaType<QList<SearchResult>>("QList<SearchResult>");
@@ -60,6 +62,11 @@ DocsetRegistry::~DocsetRegistry()
     qDeleteAll(m_docsets);
 }
 
+QAbstractItemModel *DocsetRegistry::model() const
+{
+    return m_model;
+}
+
 QString DocsetRegistry::storagePath() const
 {
     return m_storagePath;
@@ -73,10 +80,7 @@ void DocsetRegistry::setStoragePath(const QString &path)
 
     m_storagePath = path;
 
-    for (const QString &name : m_docsets.keys()) {
-        remove(name);
-    }
-
+    unloadAllDocsets();
     addDocsetsFromFolder(path);
 }
 
@@ -93,7 +97,7 @@ void DocsetRegistry::setFuzzySearchEnabled(bool enabled)
 
     m_fuzzySearchEnabled = enabled;
 
-    for (Docset *docset : m_docsets) {
+    for (Docset *docset : qAsConst(m_docsets)) {
         docset->setFuzzySearchEnabled(enabled);
     }
 }
@@ -113,11 +117,50 @@ QStringList DocsetRegistry::names() const
     return m_docsets.keys();
 }
 
-void DocsetRegistry::remove(const QString &name)
+void DocsetRegistry::loadDocset(const QString &path)
 {
-    emit docsetAboutToBeRemoved(name);
+    auto watcher = new QFutureWatcher<Docset *>();
+    connect(watcher, &QFutureWatcher<Docset *>::finished, this, [this, watcher] {
+        QScopedPointer<QFutureWatcher<Docset *>, QScopedPointerDeleteLater> guard(watcher);
+
+        Docset *docset = watcher->result();
+        // TODO: Emit error
+        if (!docset->isValid()) {
+            qWarning("Could not load docset from '%s'. Reinstall the docset.",
+                     qPrintable(docset->path()));
+            delete docset;
+            return;
+        }
+
+        docset->setFuzzySearchEnabled(m_fuzzySearchEnabled);
+
+        const QString name = docset->name();
+        if (m_docsets.contains(name)) {
+            unloadDocset(name);
+        }
+
+        m_docsets[name] = docset;
+        emit docsetLoaded(name);
+    });
+
+    watcher->setFuture(QtConcurrent::run([path] {
+        return new Docset(path);
+    }));
+}
+
+void DocsetRegistry::unloadDocset(const QString &name)
+{
+    emit docsetAboutToBeUnloaded(name);
     delete m_docsets.take(name);
-    emit docsetRemoved(name);
+    emit docsetUnloaded(name);
+}
+
+void DocsetRegistry::unloadAllDocsets()
+{
+    const auto keys = m_docsets.keys();
+    for (const QString &name : keys) {
+        unloadDocset(name);
+    }
 }
 
 Docset *DocsetRegistry::docset(const QString &name) const
@@ -135,37 +178,6 @@ Docset *DocsetRegistry::docset(int index) const
 QList<Docset *> DocsetRegistry::docsets() const
 {
     return m_docsets.values();
-}
-
-void DocsetRegistry::addDocset(const QString &path)
-{
-    QFutureWatcher<Docset *> *watcher = new QFutureWatcher<Docset *>();
-    connect(watcher, &QFutureWatcher<Docset *>::finished, this, [this, watcher] {
-        QScopedPointer<QFutureWatcher<Docset *>, QScopedPointerDeleteLater> guard(watcher);
-
-        Docset *docset = watcher->result();
-        // TODO: Emit error
-        if (!docset->isValid()) {
-            qWarning("Could not load docset from '%s'. Reinstall the docset.",
-                     qPrintable(docset->path()));
-            delete docset;
-            return;
-        }
-
-        docset->setFuzzySearchEnabled(m_fuzzySearchEnabled);
-
-        const QString name = docset->name();
-        if (m_docsets.contains(name)) {
-            remove(name);
-        }
-
-        m_docsets[name] = docset;
-        emit docsetAdded(name);
-    });
-
-    watcher->setFuture(QtConcurrent::run([path] {
-        return new Docset(path);
-    }));
 }
 
 void DocsetRegistry::search(const QString &query)
@@ -188,7 +200,7 @@ void DocsetRegistry::_runQuery(const QString &query)
 
     const SearchQuery searchQuery = SearchQuery::fromString(query);
     if (searchQuery.hasKeywords()) {
-        for (Docset *docset : m_docsets) {
+        for (Docset *docset : qAsConst(m_docsets)) {
             if (searchQuery.hasKeywords(docset->keywords()))
                 enabledDocsets << docset;
         }
@@ -220,9 +232,10 @@ void DocsetRegistry::_runQuery(const QString &query)
 void DocsetRegistry::addDocsetsFromFolder(const QString &path)
 {
     const QDir dir(path);
-    for (const QFileInfo &subdir : dir.entryInfoList(QDir::NoDotAndDotDot | QDir::AllDirs)) {
+    const auto subDirectories = dir.entryInfoList(QDir::NoDotAndDotDot | QDir::AllDirs);
+    for (const QFileInfo &subdir : subDirectories) {
         if (subdir.suffix() == QLatin1String("docset"))
-            addDocset(subdir.filePath());
+            loadDocset(subdir.filePath());
         else
             addDocsetsFromFolder(subdir.filePath());
     }

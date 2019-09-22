@@ -20,8 +20,8 @@
 **
 ****************************************************************************/
 
-#ifndef PLIST_H
-#define PLIST_H
+#ifndef ZEAL_UTIL_PLIST_H
+#define ZEAL_UTIL_PLIST_H
 
 #include <QHash>
 #include <QVariant>
@@ -32,7 +32,7 @@ namespace Util {
 class Plist : public QHash<QString, QVariant>
 {
 public:
-    Plist();
+    Plist() = default;
 
     bool read(const QString &fileName);
     bool hasError() const;
@@ -44,4 +44,4 @@ private:
 } // namespace Util
 } // namespace Zeal
 
-#endif // PLIST_H
+#endif // ZEAL_UTIL_PLIST_H

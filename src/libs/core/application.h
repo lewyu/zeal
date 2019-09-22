@@ -20,15 +20,15 @@
 **
 ****************************************************************************/
 
-#ifndef APPLICATION_H
-#define APPLICATION_H
+#ifndef ZEAL_CORE_APPLICATION_H
+#define ZEAL_CORE_APPLICATION_H
 
 #include <QObject>
+#include <QVersionNumber>
 
 class QNetworkAccessManager;
 class QNetworkReply;
 class QThread;
-
 
 namespace Zeal {
 
@@ -44,21 +44,30 @@ class MainWindow;
 namespace Core {
 
 class Extractor;
+class FileManager;
 class Settings;
 
-class Application : public QObject
+class Application final : public QObject
 {
     Q_OBJECT
+    Q_DISABLE_COPY(Application)
 public:
     explicit Application(QObject *parent = nullptr);
     ~Application() override;
 
     static Application *instance();
 
+    WidgetUi::MainWindow *mainWindow() const;
+
     QNetworkAccessManager *networkManager() const;
     Settings *settings() const;
 
     Registry::DocsetRegistry *docsetRegistry();
+    FileManager *fileManager() const;
+
+    static QString cacheLocation();
+    static QString configLocation();
+    static QVersionNumber version();
 
 public slots:
     void executeQuery(const Registry::SearchQuery &query, bool preventActivation);
@@ -86,6 +95,8 @@ private:
 
     QNetworkAccessManager *m_networkManager = nullptr;
 
+    FileManager *m_fileManager = nullptr;
+
     QThread *m_extractorThread = nullptr;
     Extractor *m_extractor = nullptr;
 
@@ -97,4 +108,4 @@ private:
 } // namespace Core
 } // namespace Zeal
 
-#endif // APPLICATION_H
+#endif // ZEAL_CORE_APPLICATION_H
